@@ -37,6 +37,10 @@ except Exception:
 TARGET_W, TARGET_H = 1080, 1920
 CLIP_MIN_SEC, CLIP_MAX_SEC = 2.0, 4.0
 
+# Pexels and several other APIs sit behind Cloudflare, which answers 403 to the
+# default "Python-urllib/3.x" agent. Every outbound request must identify itself.
+USER_AGENT = "AI-Youtube-Shorts-Generator/1.0 (+https://github.com/ghostoman/AI-Youtube-Shorts-Generator)"
+
 STAGES = ["script", "footage", "voice", "captions", "render", "metadata"]
 
 
@@ -50,19 +54,21 @@ class PipelineError(Exception):
 
 def _post_json(url: str, payload: dict, headers: dict, timeout: int = 90) -> dict:
     body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+    req = urllib.request.Request(url, data=body,
+                                 headers={"User-Agent": USER_AGENT, **headers},
+                                 method="POST")
     with urllib.request.urlopen(req, timeout=timeout, context=SSL_CTX) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
 def _get_json(url: str, headers: dict | None = None, timeout: int = 30) -> dict:
-    req = urllib.request.Request(url, headers=headers or {})
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **(headers or {})})
     with urllib.request.urlopen(req, timeout=timeout, context=SSL_CTX) as r:
         return json.loads(r.read().decode("utf-8"))
 
 
 def _download(url: str, dest: Path, timeout: int = 120) -> Path:
-    req = urllib.request.Request(url, headers={"User-Agent": "AutoShorts/1.0"})
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout, context=SSL_CTX) as r, open(dest, "wb") as f:
         shutil.copyfileobj(r, f)
     return dest
@@ -191,8 +197,11 @@ def _search_pexels(key: str, query: str, per_page: int, log) -> list[dict]:
                f"&size=medium&per_page={per_page}&page={random.randint(1, 5)}")
         data = _get_json(url, {"Authorization": key})
     except urllib.error.HTTPError as e:
-        if e.code == 401:
+        if e.code in (401, 403):
             raise PipelineError("Pexels отклонил ключ. Проверьте его на экране «Подключения».")
+        if e.code == 429:
+            log("Pexels: исчерпан часовой лимит запросов")
+            return []
         log(f"Ошибка Pexels по запросу «{query}»: HTTP {e.code}")
         return []
     except Exception as e:
@@ -667,10 +676,14 @@ def check_pexels(cfg: dict) -> tuple[bool, str]:
     try:
         data = _get_json("https://api.pexels.com/videos/search?query=city&per_page=1",
                          {"Authorization": key})
-        found = f"{data.get('total_results', 0):,}".replace(",", " ")
+        found = f"{data.get('total_results', 0):,}".replace(",", "\u00a0")
         return True, f"Подключено, по тестовому запросу найдено {found} клипов"
     except urllib.error.HTTPError as e:
-        return False, "Pexels отклонил ключ" if e.code == 401 else f"Pexels вернул ошибку {e.code}"
+        if e.code in (401, 403):
+            return False, "Pexels отклонил ключ. Скопируйте его заново с pexels.com/api целиком, без пробелов."
+        if e.code == 429:
+            return False, "Pexels: исчерпан часовой лимит. Попробуйте позже."
+        return False, f"Pexels вернул ошибку {e.code}"
     except Exception as e:
         return False, str(e)
 
@@ -679,22 +692,69 @@ def check_elevenlabs(cfg: dict) -> tuple[bool, str]:
     key = (cfg.get("elevenlabs_api_key") or "").strip()
     if not key:
         return False, "Ключ не задан"
+    voice = (cfg.get("elevenlabs_voice_id") or "").strip()
+    head = {"xi-api-key": key}
+
+    # Quota lives behind the "User" permission. A key scoped to text-to-speech
+    # only still does the job, so a refusal here must not fail the whole check.
+    quota = ""
     try:
-        data = _get_json("https://api.elevenlabs.io/v1/user/subscription", {"xi-api-key": key})
-        used = data.get("character_count", 0)
-        cap = data.get("character_limit", 0)
-        left = max(cap - used, 0)
-        voice = (cfg.get("elevenlabs_voice_id") or "").strip()
-        note = f"Подключено, осталось {left:,} символов в этом месяце".replace(",", " ")
-        if not voice:
-            return True, note + ". Добавьте ID голоса, чтобы озвучивать."
-        try:
-            v = _get_json(f"https://api.elevenlabs.io/v1/voices/{voice}", {"xi-api-key": key})
-            return True, note + f". Голос: {v.get('name', voice)}"
-        except Exception:
-            return False, note + ". Такой ID голоса в вашем аккаунте не найден."
+        data = _get_json("https://api.elevenlabs.io/v1/user/subscription", head)
+        left = max(data.get("character_limit", 0) - data.get("character_count", 0), 0)
+        pretty = f"{left:,}".replace(",", "\u00a0")
+        quota = f", осталось {pretty} символов в этом месяце"
     except urllib.error.HTTPError as e:
-        return False, "ElevenLabs отклонил ключ" if e.code == 401 else f"ElevenLabs вернул ошибку {e.code}"
+        if e.code not in (401, 403):
+            return False, f"ElevenLabs вернул ошибку {e.code}"
+        quota = ", остаток символов не виден — у ключа нет права User"
+    except Exception as e:
+        return False, str(e)
+
+    if not voice:
+        return True, "Ключ принят" + quota + ". Добавьте ID голоса, чтобы озвучивать."
+
+    # The voice directory needs its own "voices_read" permission, so a refusal
+    # here says nothing about whether the key can actually speak.
+    name = None
+    try:
+        name = _get_json(f"https://api.elevenlabs.io/v1/voices/{voice}", head).get("name")
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return False, "Ключ рабочий, но такого ID голоса в вашем аккаунте нет."
+        if e.code not in (401, 403):
+            return False, f"ElevenLabs вернул ошибку {e.code}"
+    except Exception as e:
+        return False, str(e)
+
+    if name:
+        return True, f"Подключено{quota}. Голос: {name}"
+
+    # Both read endpoints were refused. Settle it the only way that is not a
+    # permission question: ask the key to speak two characters.
+    try:
+        payload = json.dumps({
+            "text": "ok",
+            "model_id": cfg.get("elevenlabs_model") or "eleven_turbo_v2_5",
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice}",
+            data=payload,
+            headers={"User-Agent": USER_AGENT, "Content-Type": "application/json",
+                     "xi-api-key": key, "Accept": "audio/mpeg"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=45, context=SSL_CTX) as r:
+            got = len(r.read())
+        if got < 500:
+            return False, "ElevenLabs вернул пустое аудио. Проверьте ID голоса."
+        return True, "Подключено, озвучка работает. Ключ урезан в правах, поэтому имя голоса и остаток символов не видны."
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="ignore")[:200]
+        if e.code in (401, 403):
+            return False, ("ElevenLabs отклонил ключ. Выпустите новый на elevenlabs.io и не урезайте ему права при создании.")
+        if e.code == 422:
+            return False, f"ElevenLabs не принял ID голоса. Скопируйте его заново через Copy voice ID. ({detail})"
+        return False, f"ElevenLabs вернул ошибку {e.code}"
     except Exception as e:
         return False, str(e)
 
