@@ -1,0 +1,10 @@
+# Core — needed to run the panel and make videos
+flask>=3.0.0
+certifi>=2024.2.2
+
+# YouTube uploading — optional, remove these two lines if you upload by hand
+google-api-python-client>=2.120.0
+google-auth-oauthlib>=1.2.0
+
+# Word-level captions — optional and a large download, install separately:
+#   pip install faster-whisper

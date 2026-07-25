@@ -1,0 +1,26 @@
+{
+  "channel_topic": "Describe your channel here in several paragraphs: the subject, who it is for, the angle you take, the tone, and what you never want to see.",
+  "language_name": "English",
+  "target_seconds": 50,
+
+  "deepseek_api_key": "",
+  "deepseek_model": "deepseek-v4-pro",
+  "pexels_api_key": "",
+  "pixabay_api_key": "",
+  "elevenlabs_api_key": "",
+  "elevenlabs_voice_id": "",
+
+  "clips_per_video": 12,
+  "words_per_line": 3,
+  "whisper_model": "base",
+  "caption_font": "Arial Black",
+  "caption_size": 90,
+  "caption_margin_v": 420,
+
+  "videos_per_run": 3,
+  "schedule_enabled": false,
+  "schedule_times": ["09:00", "18:00"],
+  "timezone_offset_minutes": 0,
+  "upload_to_youtube": false,
+  "privacy_status": "private"
+}
