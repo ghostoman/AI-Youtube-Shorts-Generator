@@ -1,0 +1,28 @@
+# Your keys live here. Never commit this file.
+config.json
+
+# Python and FFmpeg that the launcher downloads on first run
+runtime/
+
+# Google credentials and the token they produce
+client_secret.json
+youtube_token.json
+*.token.json
+
+# Generated videos and scratch files
+output/
+*.mp4
+*.mp3
+*.srt
+*.ass
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+
+# OS
+.DS_Store
+Thumbs.db
