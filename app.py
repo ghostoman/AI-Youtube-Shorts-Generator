@@ -33,8 +33,14 @@ DEFAULTS = {
     "channel_topic": "",
     "language": "en",
     "language_name": "English",
+    "llm_provider": "deepseek",
     "deepseek_api_key": "",
     "deepseek_model": "deepseek-v4-pro",
+    "openrouter_api_key": "",
+    "openrouter_model": "deepseek/deepseek-v4-pro",
+    "custom_base_url": "",
+    "custom_api_key": "",
+    "custom_model": "",
     "pexels_api_key": "",
     "pixabay_api_key": "",
     "elevenlabs_api_key": "",
@@ -277,7 +283,8 @@ def api_check(service: str):
     cfg.update({k: v for k, v in incoming.items() if k in DEFAULTS})
 
     checks = {
-        "deepseek": lambda: pipeline.check_deepseek(cfg),
+        "llm": lambda: pipeline.check_llm(cfg),
+        "deepseek": lambda: pipeline.check_llm(cfg),   # old route name
         "pexels": lambda: pipeline.check_pexels(cfg),
         "elevenlabs": lambda: pipeline.check_elevenlabs(cfg),
         "ffmpeg": pipeline.check_ffmpeg,
