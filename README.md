@@ -67,9 +67,7 @@ by the services below.
 **Pexels** — supplies the footage. Free, no card.
 
 **ElevenLabs** — records the voice. The free tier is enough to try this
-properly. [Sign up here](https://try.elevenlabs.io/iwi5tf5b0pe4) — that is an
-affiliate link, so it supports this project at no extra cost to you. Plain link
-if you prefer: [elevenlabs.io](https://elevenlabs.io)
+properly. [Sign up here](https://try.elevenlabs.io/iwi5tf5b0pe4) 
 
 Full walkthrough with where each key lives: **[docs/SETUP.md](docs/SETUP.md)**
 
