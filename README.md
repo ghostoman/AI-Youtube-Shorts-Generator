@@ -33,28 +33,42 @@ Every video moves through six stages, and you watch them light up as it works:
 
 | Stage | What happens | Service |
 |---|---|---|
-| Script | Writes a spoken script from your channel brief | DeepSeek |
+| Script | Writes a spoken script from your channel brief | your AI provider |
 | Footage | Searches and downloads matching vertical stock clips | Pexels |
 | Voice | Records the voiceover in the voice you picked | ElevenLabs |
 | Captions | Times the words to the audio and writes the subtitles | local |
 | Render | Cuts, crops to 9:16, burns in captions, mixes audio | FFmpeg |
-| Metadata | Writes the title, description and tags | DeepSeek |
+| Metadata | Writes the title, description and tags | your AI provider |
 
 Output is a finished 1080x1920 MP4 plus a JSON file with its metadata, in
 `output/videos/`. Nothing is uploaded unless you switch uploading on.
 
 ## What you need
 
-Three free accounts. The panel has a **Test** button for each one, so you find
-problems during setup rather than at three in the morning.
+Two or three free accounts, depending on which AI provider you pick. The panel
+has a **Test** button for each one, so you find problems during setup rather
+than at three in the morning.
 
-- **DeepSeek** — writes the scripts. Costs a small amount per video; add a few
-  dollars of credit to start.
-- **Pexels** — supplies the footage. Free, no card.
-- **ElevenLabs** — records the voice. Free tier is enough to try this properly.
+**An AI provider** to write the scripts. Pick one on the Connections screen:
 
-Full walkthrough with screenshots of where each key lives:
-**[docs/SETUP.md](docs/SETUP.md)**
+- **DeepSeek** — connect directly. Cheapest option; add a few dollars of credit
+  at platform.deepseek.com to start.
+- **OpenRouter** — one key, hundreds of models. Create a key at
+  openrouter.ai/keys and put the model id from openrouter.ai/models in the model
+  field, in `provider/model` form. Handy if you already have an OpenRouter
+  account or want to try a different model without changing anything else.
+- **Custom** — any OpenAI-compatible API. Paste the base URL, key and model
+  name. Works with other gateways, a company proxy, or a model running on your
+  own machine.
+
+Only text goes through this provider. Footage, voice and rendering are handled
+by the services below.
+
+**Pexels** — supplies the footage. Free, no card.
+
+**ElevenLabs** — records the voice. Free tier is enough to try this properly.
+
+Full walkthrough with where each key lives: **[docs/SETUP.md](docs/SETUP.md)**
 
 ## The one thing that matters
 
@@ -96,13 +110,18 @@ gitignored — if you fork this, keep it that way.
   a drafting tool with a human in the loop, not a fire-and-forget spam machine.
 - The app must stay open for scheduled runs to fire.
 
-## Need help, or want it set up for you
+## Help and community
 
-If you get stuck, message me on Telegram: **[@ghostoman](https://t.me/ghostoman)**
+Stuck, or found a bug? The Telegram group is the fastest place to get an answer,
+and it is where updates get posted:
 
-I also set this up for people as a paid service — the whole thing configured
-around your channel, keys connected, brief written with you, schedule running.
-If you would rather skip the setup entirely, that is the fastest route.
+**ТЕЛЕГРАМ_ССЫЛКА**
+
+Bug reports are welcome as GitHub issues too.
+
+If you would rather skip the setup entirely, I configure this for people as a
+paid service — keys connected, brief written with you, schedule running. Message
+me at **[@ghostoman](https://t.me/ghostoman)**.
 
 ## Support the author
 
@@ -115,7 +134,7 @@ maintained.
 0xbce8dd116ecdb5895cd9bf837c7e95d2350c31ba
 ```
 
-Stars on the repo help too.
+A star on the repo helps too — it is how other people find it.
 
 ## License
 
