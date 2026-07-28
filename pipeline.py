@@ -100,38 +100,146 @@ def _strip_fences(text: str) -> str:
 
 
 # ──────────────────────────────────────────────────────────────
-# 1. script (DeepSeek)
+# 1. script — any OpenAI-compatible provider
 # ──────────────────────────────────────────────────────────────
 
-def _deepseek(cfg: dict, prompt: str, max_tokens: int, temperature: float) -> str:
-    key = (cfg.get("deepseek_api_key") or "").strip()
-    if not key:
-        raise PipelineError("Ключ DeepSeek не задан. Добавьте его на экране «Подключения».")
+# Every provider below speaks the same /chat/completions dialect, so the only
+# things that differ are the URL, the key, the model id and one vendor-specific
+# switch for turning reasoning off.
+PROVIDERS = {
+    "deepseek": {
+        "label": "DeepSeek",
+        "url": "https://api.deepseek.com/chat/completions",
+        "key_field": "deepseek_api_key",
+        "model_field": "deepseek_model",
+        "default_model": "deepseek-v4-pro",
+    },
+    "openrouter": {
+        "label": "OpenRouter",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "key_field": "openrouter_api_key",
+        "model_field": "openrouter_model",
+        "default_model": "deepseek/deepseek-v4-pro",
+    },
+    "custom": {
+        "label": "Свой адрес",
+        "url": None,                      # taken from custom_base_url
+        "key_field": "custom_api_key",
+        "model_field": "custom_model",
+        "default_model": "",
+    },
+}
 
-    payload = {
-        "model": cfg.get("deepseek_model") or "deepseek-v4-pro",
+
+def _completions_url(base: str) -> str:
+    """Turn whatever the user pasted into a /chat/completions URL."""
+    base = (base or "").strip().rstrip("/")
+    if not base:
+        return ""
+    if base.endswith("/chat/completions"):
+        return base
+    return base + "/chat/completions"
+
+
+def resolve_provider(cfg: dict) -> dict:
+    """Returns {name, label, url, key, model} or raises PipelineError."""
+    name = (cfg.get("llm_provider") or "deepseek").strip().lower()
+    spec = PROVIDERS.get(name)
+    if not spec:
+        raise PipelineError(f"Неизвестный провайдер «{name}». Выберите его на экране «Подключения».")
+
+    key = (cfg.get(spec["key_field"]) or "").strip()
+    if not key:
+        raise PipelineError(f"Ключ {spec['label']} не задан. Добавьте его на экране «Подключения».")
+
+    model = (cfg.get(spec["model_field"]) or spec["default_model"]).strip()
+    if not model:
+        raise PipelineError("Не задано имя модели. Укажите его на экране «Подключения».")
+
+    url = spec["url"] or _completions_url(cfg.get("custom_base_url"))
+    if not url:
+        raise PipelineError("Не задан адрес API. Укажите его на экране «Подключения».")
+    if not url.startswith(("http://", "https://")):
+        raise PipelineError("Адрес API должен начинаться с https://")
+
+    return {"name": name, "label": spec["label"], "url": url, "key": key, "model": model}
+
+
+def _no_reasoning(provider_name: str) -> dict:
+    """
+    Reasoning modes ignore `temperature`, and script variety lives on
+    temperature — without this the whole channel goes monotone.
+    Each gateway spells the switch differently.
+    """
+    if provider_name == "deepseek":
+        return {"thinking": {"type": "disabled"}}
+    if provider_name == "openrouter":
+        return {"reasoning": {"enabled": False}}
+    return {}          # unknown gateway: send nothing it might choke on
+
+
+def _chat(cfg: dict, prompt: str, max_tokens: int, temperature: float) -> str:
+    p = resolve_provider(cfg)
+
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {p['key']}"}
+    if p["name"] == "openrouter":
+        # Optional attribution headers; they also make the app visible on
+        # OpenRouter's public app rankings.
+        headers["HTTP-Referer"] = "https://github.com/ghostoman/AI-Youtube-Shorts-Generator"
+        headers["X-Title"] = "AI YouTube Shorts Generator"
+
+    base_payload = {
+        "model": p["model"],
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
-        # DeepSeek V4 turns thinking on by default, and in that mode it ignores
-        # `temperature` entirely. Script variety depends on temperature, so the
-        # whole channel would go monotone without this line.
-        "thinking": {"type": "disabled"},
         "temperature": temperature,
     }
+
+    def send(extra: dict) -> dict:
+        return _post_json(p["url"], {**base_payload, **extra}, headers)
+
+    switch = _no_reasoning(p["name"])
     try:
-        data = _post_json(
-            "https://api.deepseek.com/chat/completions",
-            payload,
-            {"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
-        )
+        data = send(switch)
     except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="ignore")[:300]
-        if e.code == 401:
-            raise PipelineError("DeepSeek отклонил ключ. Проверьте его на экране «Подключения».")
-        if e.code == 402:
-            raise PipelineError("На счёте DeepSeek закончились средства. Пополните баланс и запустите снова.")
-        raise PipelineError(f"DeepSeek вернул ошибку {e.code}: {detail}")
-    return data["choices"][0]["message"]["content"].strip()
+        detail = e.read().decode("utf-8", errors="ignore")[:400]
+
+        # Some models refuse to have reasoning turned off and answer 400.
+        # Losing temperature control is far better than failing outright.
+        if e.code == 400 and switch and re.search(r"reason|think", detail, re.I):
+            try:
+                data = send({})
+            except urllib.error.HTTPError as e2:
+                raise PipelineError(_llm_http_error(p, e2.code,
+                                                   e2.read().decode("utf-8", errors="ignore")[:400]))
+        else:
+            raise PipelineError(_llm_http_error(p, e.code, detail))
+    except urllib.error.URLError as e:
+        raise PipelineError(f"Не удалось соединиться с {p['label']}: {e.reason}")
+
+    try:
+        content = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise PipelineError(f"{p['label']} вернул ответ неожиданного вида: {str(data)[:200]}")
+    if not content or not content.strip():
+        raise PipelineError(f"{p['label']} вернул пустой ответ. Попробуйте другую модель.")
+    return content.strip()
+
+
+def _llm_http_error(p: dict, code: int, detail: str) -> str:
+    label = p["label"]
+    if code == 401:
+        return f"{label} отклонил ключ. Проверьте его на экране «Подключения»."
+    if code == 402:
+        return f"На счёте {label} закончились средства. Пополните баланс."
+    if code == 403:
+        return f"{label} отклонил запрос. Возможно, у ключа нет доступа к этой модели."
+    if code == 404:
+        return (f"{label} не знает модель «{p['model']}». "
+                f"Проверьте имя модели в списке провайдера.")
+    if code == 429:
+        return f"{label}: слишком много запросов. Подождите и попробуйте снова."
+    return f"{label} вернул ошибку {code}: {detail}"
 
 
 def write_script(cfg: dict, topic: str, log) -> dict:
@@ -164,7 +272,7 @@ must describe filmable scenes (people, places, actions), never abstract concepts
 Return ONLY valid JSON, no code fences:
 {{"hook": "the opening sentence", "script": "the full voiceover text", "keywords": ["...", "...", "...", "...", "...", "..."]}}"""
 
-    raw = _strip_fences(_deepseek(cfg, prompt, max_tokens=1200, temperature=0.9))
+    raw = _strip_fences(_chat(cfg, prompt, max_tokens=1200, temperature=0.9))
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
@@ -564,7 +672,7 @@ Return ONLY valid JSON, no code fences:
 {{"title": "...", "description": "...", "tags": ["...", "..."]}}"""
 
     try:
-        raw = _strip_fences(_deepseek(cfg, prompt, max_tokens=700, temperature=0.8))
+        raw = _strip_fences(_chat(cfg, prompt, max_tokens=700, temperature=0.8))
         data = json.loads(raw)
         title = (data.get("title") or "").strip()[:100]
         desc = (data.get("description") or "").strip()
@@ -659,14 +767,41 @@ def generate(cfg: dict, output_root: Path, on_log=None, on_stage=None,
 # connection checks used by the Test buttons in the UI
 # ──────────────────────────────────────────────────────────────
 
-def check_deepseek(cfg: dict) -> tuple[bool, str]:
+def check_llm(cfg: dict) -> tuple[bool, str]:
+    """Asks the configured provider to say one word. Nothing else proves it works."""
     try:
-        _deepseek(cfg, "Reply with the single word: ready", max_tokens=10, temperature=0.1)
-        return True, f"Подключено, модель {cfg.get('deepseek_model') or 'deepseek-v4-pro'}"
+        p = resolve_provider(cfg)
+    except PipelineError as e:
+        return False, str(e)
+
+    try:
+        answer = _chat(cfg, "Reply with the single word: ready", max_tokens=10, temperature=0.1)
     except PipelineError as e:
         return False, str(e)
     except Exception as e:
         return False, str(e)
+
+    note = f"Подключено через {p['label']}, модель {p['model']}"
+
+    # OpenRouter can also tell us what is left on the key. Purely a nicety, so a
+    # refusal here must not turn a working connection into a failure.
+    if p["name"] == "openrouter":
+        try:
+            info = _get_json("https://openrouter.ai/api/v1/key",
+                             {"Authorization": f"Bearer {p['key']}"}).get("data", {})
+            limit, used = info.get("limit"), info.get("usage")
+            if limit is None and used is not None:
+                note += f". Потрачено ${float(used):.2f}, лимит не задан"
+            elif limit is not None and used is not None:
+                note += f". Остаток ${max(float(limit) - float(used), 0):.2f}"
+        except Exception:
+            pass
+
+    return True, note
+
+
+# Kept so older configs and the /api/check/deepseek route keep working.
+check_deepseek = check_llm
 
 
 def check_pexels(cfg: dict) -> tuple[bool, str]:
