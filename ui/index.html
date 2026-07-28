@@ -350,17 +350,48 @@
     <p class="sub">Работу делают четыре сервиса: один пишет, второй даёт футаж, третий озвучивает, четвёртый собирает видео. Вставьте ключи и нажмите «Проверить», чтобы поймать проблемы сейчас, а не ночью посреди прогона.</p>
 
     <div class="card">
-      <h3>DeepSeek — пишет сценарии</h3>
-      <p class="hint">Ключ создаётся на platform.deepseek.com, там же пополняется баланс. Сценарии короткие, поэтому прогон стоит копейки.</p>
-      <label class="field"><span class="lbl">API ключ</span>
-        <input type="password" id="deepseek_api_key" placeholder="sk-..."></label>
-      <label class="field"><span class="lbl">Модель</span>
-        <select id="deepseek_model">
-          <option value="deepseek-v4-pro">deepseek-v4-pro — пишет лучше</option>
-          <option value="deepseek-v4-flash">deepseek-v4-flash — дешевле и быстрее</option>
+      <h3>ИИ — пишет сценарии</h3>
+      <p class="hint">Можно подключиться напрямую к DeepSeek или через шлюз вроде OpenRouter, где одним ключом доступны сотни моделей.</p>
+
+      <label class="field"><span class="lbl">Провайдер</span>
+        <select id="llm_provider" onchange="switchProvider()">
+          <option value="deepseek">DeepSeek — напрямую, дешевле всего</option>
+          <option value="openrouter">OpenRouter — один ключ на все модели</option>
+          <option value="custom">Свой адрес — любой OpenAI-совместимый API</option>
         </select></label>
-      <button class="ghost" onclick="test('deepseek')">Проверить</button>
-      <div class="status"><i class="lamp" id="lamp_deepseek"></i><span id="msg_deepseek">Не проверено</span></div>
+
+      <div data-prov="deepseek">
+        <p class="hint">Ключ создаётся на platform.deepseek.com, там же пополняется баланс.</p>
+        <label class="field"><span class="lbl">API ключ</span>
+          <input type="password" id="deepseek_api_key" placeholder="sk-..."></label>
+        <label class="field"><span class="lbl">Модель</span>
+          <select id="deepseek_model">
+            <option value="deepseek-v4-pro">deepseek-v4-pro — пишет лучше</option>
+            <option value="deepseek-v4-flash">deepseek-v4-flash — дешевле и быстрее</option>
+          </select></label>
+      </div>
+
+      <div data-prov="openrouter" hidden>
+        <p class="hint">Ключ создаётся на openrouter.ai/keys и начинается с sk-or-v1-. Имя модели берётся из каталога openrouter.ai/models в виде «провайдер/модель».</p>
+        <label class="field"><span class="lbl">API ключ</span>
+          <input type="password" id="openrouter_api_key" placeholder="sk-or-v1-..."></label>
+        <label class="field"><span class="lbl">Модель</span>
+          <input type="text" id="openrouter_model" placeholder="deepseek/deepseek-v4-pro"></label>
+        <p class="hint" style="margin:0">Часто берут: deepseek/deepseek-v4-pro, deepseek/deepseek-v4-flash, google/gemini-3.5-flash, openai/gpt-5.2</p>
+      </div>
+
+      <div data-prov="custom" hidden>
+        <p class="hint">Подойдёт любой сервис с OpenAI-совместимым API: другой шлюз, корпоративный прокси или локальная модель.</p>
+        <label class="field"><span class="lbl">Адрес API</span>
+          <input type="text" id="custom_base_url" placeholder="https://адрес-сервиса/v1"></label>
+        <label class="field"><span class="lbl">API ключ</span>
+          <input type="password" id="custom_api_key"></label>
+        <label class="field"><span class="lbl">Модель</span>
+          <input type="text" id="custom_model" placeholder="имя модели у этого сервиса"></label>
+      </div>
+
+      <button class="ghost" onclick="test('llm')">Проверить</button>
+      <div class="status"><i class="lamp" id="lamp_llm"></i><span id="msg_llm">Не проверено</span></div>
     </div>
 
     <div class="card">
@@ -489,8 +520,10 @@
 <script>
 const STAGES=[["script","Сценарий"],["footage","Футаж"],["voice","Озвучка"],
               ["captions","Субтитры"],["render","Монтаж"],["metadata","Метаданные"]];
-const FIELDS=["channel_topic","language_name","target_seconds","deepseek_api_key",
-  "deepseek_model","pexels_api_key","pixabay_api_key","elevenlabs_api_key",
+const FIELDS=["channel_topic","language_name","target_seconds","llm_provider",
+  "deepseek_api_key","deepseek_model","openrouter_api_key","openrouter_model",
+  "custom_base_url","custom_api_key","custom_model",
+  "pexels_api_key","pixabay_api_key","elevenlabs_api_key",
   "elevenlabs_voice_id","videos_per_run","timezone_offset_minutes","privacy_status"];
 const CHECKS=["schedule_enabled","upload_to_youtube"];
 const WALLET="0xbce8dd116ecdb5895cd9bf837c7e95d2350c31ba";
@@ -511,6 +544,15 @@ $("nav").addEventListener("click",e=>{
 $("channel_topic").addEventListener("input",e=>{
   $("topicCount").textContent=e.target.value.length.toLocaleString("ru-RU")+" символов";
 });
+
+function switchProvider(){
+  const v=$("llm_provider").value;
+  document.querySelectorAll("[data-prov]").forEach(el=>{
+    el.hidden = el.dataset.prov!==v;
+  });
+  const lamp=$("lamp_llm"); if(lamp) lamp.className="lamp";
+  const msg=$("msg_llm"); if(msg) msg.textContent="Не проверено";
+}
 
 function toast(msg,bad){
   const t=$("toast"); t.textContent=msg; t.className="toast show"+(bad?" bad":"");
@@ -631,6 +673,7 @@ async function poll(){
       });
       CHECKS.forEach(f=>{ const el=$(f); if(el) el.checked=!!d.config[f]; });
       times=(d.config.schedule_times||[]).slice(); renderTimes();
+      switchProvider();
       $("topicCount").textContent=(d.config.channel_topic||"").length.toLocaleString("ru-RU")+" символов";
       $("runCount").value=d.config.videos_per_run||1;
     }
