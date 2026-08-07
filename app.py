@@ -9,12 +9,22 @@ keys never leave config.json on this computer.
 from __future__ import annotations
 
 import json
+import os
+import sys
 import threading
 import time
 import webbrowser
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+# Встраиваемая сборка Python (та, что скачивает установщик) работает в
+# изолированном режиме и НЕ добавляет папку скрипта в пути поиска модулей.
+# Без этих двух строк `import pipeline` падает с ModuleNotFoundError у всех,
+# у кого Python не установлен в системе. Должны стоять ДО импорта pipeline.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 from flask import Flask, jsonify, request, send_file, send_from_directory
 
